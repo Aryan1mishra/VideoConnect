@@ -7,16 +7,25 @@ require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+const FRONTEND_URLS = "https://videoconnect-ikarus-3d.onrender.com";
 const io = socketIo(server, {
   cors: {
-    origin: [ "https://videoconnect-for-ikarus-3d.onrender.com","http://localhost:3000" , "https://*.onrender.com"],
+    origin: ["http://localhost:3000" , 
+      FRONTEND_URLS,
+      "https://videoconnect-ikarus-3d.onrender.com",
+      "https://*.onrender.com"
+    ],
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
 app.use(cors({
-  origin: [ "https://videoconnect-for-ikarus-3d.onrender.com","http://localhost:3000" , "https://*.onrender.com"],
+  origin: ["http://localhost:3000" , 
+      FRONTEND_URLS,
+      "https://videoconnect-ikarus-3d.onrender.com",
+      "https://*.onrender.com"
+    ],
   credentials: true
 }));
 
