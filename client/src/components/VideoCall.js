@@ -5,8 +5,7 @@ import {
   Video,
   VideoOff,
   Monitor,
-  MonitorOff,
-  Settings
+  MonitorOff
 } from 'lucide-react';
 
 function VideoCall({ socket, participants, userName, meetingId, isDark }) {
@@ -18,46 +17,60 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const peerConnections = useRef(new Map());
 
-  const configuration = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
-    ]
-  };
-
   useEffect(() => {
     if (!socket) return;
 
-    console.log('Initializing video call for meeting:', meetingId);
     initializeMedia();
     setupSocketListeners();
 
     return () => {
-      console.log('Cleaning up video call...');
       cleanup();
     };
   }, [socket, meetingId]);
+
+  useEffect(() => {
+    const remoteParticipants = participants.filter(p => p.socketId !== socket?.id);
+    
+    remoteParticipants.forEach(participant => {
+      if (!peerConnections.current.has(participant.socketId)) {
+        createPeerConnection(participant.socketId);
+      }
+    });
+
+    peerConnections.current.forEach((pc, userId) => {
+      if (!remoteParticipants.find(p => p.socketId === userId)) {
+        pc.close();
+        peerConnections.current.delete(userId);
+        
+        const remoteVideo = remoteVideosRef.current.get(userId);
+        if (remoteVideo) {
+          remoteVideo.srcObject = null;
+          remoteVideosRef.current.delete(userId);
+        }
+      }
+    });
+  }, [participants, socket]);
 
   const initializeMedia = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
           width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
+          height: { ideal: 720 }
         },
         audio: {
           echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
+          noiseSuppression: true
         }
       });
+      
       setLocalStream(stream);
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
       }
+
     } catch (error) {
       console.error('Error accessing media devices:', error);
-      alert('Could not access camera and microphone. Please check your permissions.');
     }
   };
 
@@ -68,11 +81,25 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
     socket.on('answer', handleAnswer);
     socket.on('ice-candidate', handleIceCandidate);
     socket.on('user-joined', handleUserJoined);
-    socket.on('user-left', handleUserLeft);
+  };
+
+  const handleUserJoined = (data) => {
+    const { user } = data;
+    if (user.socketId === socket.id) return;
+    createPeerConnection(user.socketId);
   };
 
   const createPeerConnection = (userId) => {
-    const peerConnection = new RTCPeerConnection(configuration);
+    if (peerConnections.current.has(userId)) {
+      return peerConnections.current.get(userId);
+    }
+
+    const peerConnection = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    });
 
     if (localStream) {
       localStream.getTracks().forEach(track => {
@@ -81,10 +108,11 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
     }
 
     peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && socket) {
         socket.emit('ice-candidate', {
           target: userId,
-          candidate: event.candidate
+          candidate: event.candidate,
+          meetingId: meetingId
         });
       }
     };
@@ -97,23 +125,23 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
     };
 
     peerConnections.current.set(userId, peerConnection);
+
+    createOffer(userId, peerConnection);
+
     return peerConnection;
   };
 
-  const handleUserJoined = async (data) => {
-    const { user } = data;
-    if (user.socketId === socket.id) return;
-
-    const peerConnection = createPeerConnection(user.socketId);
-
+  const createOffer = async (userId, peerConnection) => {
     try {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
       socket.emit('offer', {
-        target: user.socketId,
-        offer: offer
+        target: userId,
+        offer: offer,
+        meetingId: meetingId
       });
+
     } catch (error) {
       console.error('Error creating offer:', error);
     }
@@ -121,17 +149,23 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
 
   const handleOffer = async (data) => {
     const { offer, sender } = data;
-    const peerConnection = createPeerConnection(sender);
+    
+    let peerConnection = peerConnections.current.get(sender);
+    if (!peerConnection) {
+      peerConnection = createPeerConnection(sender);
+    }
 
     try {
-      await peerConnection.setRemoteDescription(offer);
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
 
       socket.emit('answer', {
         target: sender,
-        answer: answer
+        answer: answer,
+        meetingId: meetingId
       });
+
     } catch (error) {
       console.error('Error handling offer:', error);
     }
@@ -140,31 +174,26 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
   const handleAnswer = async (data) => {
     const { answer, sender } = data;
     const peerConnection = peerConnections.current.get(sender);
+    
     if (peerConnection) {
-      await peerConnection.setRemoteDescription(answer);
+      try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      } catch (error) {
+        console.error('Error setting remote description:', error);
+      }
     }
   };
 
   const handleIceCandidate = async (data) => {
     const { candidate, sender } = data;
     const peerConnection = peerConnections.current.get(sender);
-    if (peerConnection) {
-      await peerConnection.addIceCandidate(candidate);
-    }
-  };
-
-  const handleUserLeft = (data) => {
-    const { userId } = data;
-    const peerConnection = peerConnections.current.get(userId);
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnections.current.delete(userId);
-    }
-
-    const remoteVideo = remoteVideosRef.current.get(userId);
-    if (remoteVideo) {
-      remoteVideo.srcObject = null;
-      remoteVideosRef.current.delete(userId);
+    
+    if (peerConnection && candidate) {
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error('Error adding ICE candidate:', error);
+      }
     }
   };
 
@@ -212,7 +241,7 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
           localVideoRef.current.srcObject = screenStream;
         }
 
-        screenStream.getVideoTracks()[0].onended = () => {
+        videoTrack.onended = () => {
           toggleScreenShare();
         };
 
@@ -256,6 +285,7 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
     }
     peerConnections.current.forEach(pc => pc.close());
     peerConnections.current.clear();
+    remoteVideosRef.current.clear();
   };
 
   const setRemoteVideoRef = (userId, element) => {
@@ -270,34 +300,26 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
     const totalVideos = participants.filter(p => p.socketId !== socket?.id).length + 1;
     
     if (totalVideos === 1) return 'grid-cols-1';
-    if (totalVideos === 2) return 'grid-cols-1 xs:grid-cols-2';
-    if (totalVideos <= 4) return 'grid-cols-1 xs:grid-cols-2';
-    if (totalVideos <= 6) return 'grid-cols-1 xs:grid-cols-2 sm:grid-cols-3';
-    return 'grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4';
-  };
-
-  const getVideoSizeClass = () => {
-    const totalVideos = participants.filter(p => p.socketId !== socket?.id).length + 1;
-    
-    if (totalVideos === 1) return 'h-full';
-    if (totalVideos <= 4) return 'aspect-video';
-    return 'aspect-video xs:aspect-square';
+    if (totalVideos === 2) return 'grid-cols-1 md:grid-cols-2';
+    if (totalVideos <= 4) return 'grid-cols-1 md:grid-cols-2';
+    if (totalVideos <= 6) return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
+    return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
   };
 
   const remoteParticipants = participants.filter(participant => participant.socketId !== socket?.id);
 
   return (
-    <div className="h-full flex flex-col p-2 xs:p-3 sm:p-4 space-y-3 xs:space-y-4">
-      <div className={`flex-1 grid ${getGridClass()} gap-2 xs:gap-3 sm:gap-4 p-2 xs:p-3 sm:p-4 overflow-hidden`}>
-        <div className={`video-container ${getVideoSizeClass()} relative group`}>
+    <div className="h-full flex flex-col p-4 space-y-4">
+      <div className={`flex-1 grid ${getGridClass()} gap-4 p-4 overflow-hidden`}>
+        <div className="video-container aspect-video relative">
           <video
             ref={localVideoRef}
             autoPlay
             muted
             playsInline
-            className="w-full h-full object-cover rounded-lg xs:rounded-xl"
+            className="w-full h-full object-cover rounded-xl"
           />
-          <div className={`absolute top-2 left-2 xs:top-3 xs:left-3 px-2 xs:px-3 py-1 rounded-full text-xs xs:text-sm font-semibold text-shadow ${
+          <div className={`absolute top-3 left-3 px-3 py-1 rounded-full text-sm font-semibold ${
             isDark ? 'bg-black/50 text-white' : 'bg-white/90 text-gray-800'
           }`}>
             {userName} (You)
@@ -306,76 +328,78 @@ function VideoCall({ socket, participants, userName, meetingId, isDark }) {
           </div>
           
           {!videoEnabled && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 rounded-lg xs:rounded-xl">
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 rounded-xl">
               <div className="text-center">
-                <div className={`w-12 h-12 xs:w-16 xs:h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 ${
                   isDark ? 'bg-gray-700' : 'bg-gray-300'
                 }`}>
-                  <VideoOff size={20} className={`xs:w-6 xs:h-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`} />
+                  <VideoOff size={24} className={isDark ? 'text-gray-400' : 'text-gray-600'} />
                 </div>
-                <p className={`text-xs xs:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                <p className={isDark ? 'text-gray-400' : 'text-gray-600'}>
                   Camera is off
                 </p>
               </div>
             </div>
           )}
         </div>
+
         {remoteParticipants.map(participant => (
-          <div key={participant.socketId} className={`video-container ${getVideoSizeClass()} relative group`}>
+          <div key={participant.socketId} className="video-container aspect-video relative">
             <video
               ref={(el) => setRemoteVideoRef(participant.socketId, el)}
               autoPlay
               playsInline
-              className="w-full h-full object-cover rounded-lg xs:rounded-xl"
+              className="w-full h-full object-cover rounded-xl"
             />
-            <div className={`absolute top-2 left-2 xs:top-3 xs:left-3 px-2 xs:px-3 py-1 rounded-full text-xs xs:text-sm font-semibold text-shadow ${
+            <div className={`absolute top-3 left-3 px-3 py-1 rounded-full text-sm font-semibold ${
               isDark ? 'bg-black/50 text-white' : 'bg-white/90 text-gray-800'
             }`}>
-              {participant.name}
+              {participant.userName}
             </div>
           </div>
         ))}
       </div>
 
-      <div className={`rounded-lg xs:rounded-xl p-3 xs:p-4 mx-auto w-full max-w-2xl ${
-        isDark ? 'glass-dark' : 'bg-white/80 backdrop-blur-md shadow-lg'
+      <div className={`rounded-xl p-4 mx-auto w-full max-w-2xl ${
+        isDark ? 'bg-gray-800' : 'bg-white shadow-lg'
       }`}>
-        <div className="flex justify-center space-x-2 xs:space-x-3 sm:space-x-4">
-          
+        <div className="flex justify-center space-x-4">
           <button
             onClick={toggleAudio}
-            className={`control-btn ${
-              audioEnabled ? 'control-btn-primary' : 'control-btn-danger'
+            className={`p-3 rounded-full transition-all duration-200 ${
+              audioEnabled 
+                ? 'bg-gray-600 hover:bg-gray-500 text-white' 
+                : 'bg-red-600 hover:bg-red-500 text-white'
             }`}
-            title={audioEnabled ? 'Mute microphone' : 'Unmute microphone'}
           >
-            {audioEnabled ? <Mic size={16} className="xs:w-5 xs:h-5" /> : <MicOff size={16} className="xs:w-5 xs:h-5" />}
+            {audioEnabled ? <Mic size={20} /> : <MicOff size={20} />}
           </button>
 
-       
           <button
             onClick={toggleVideo}
-            className={`control-btn ${
-              videoEnabled ? 'control-btn-primary' : 'control-btn-danger'
+            className={`p-3 rounded-full transition-all duration-200 ${
+              videoEnabled 
+                ? 'bg-gray-600 hover:bg-gray-500 text-white' 
+                : 'bg-red-600 hover:bg-red-500 text-white'
             }`}
-            title={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
           >
-            {videoEnabled ? <Video size={16} className="xs:w-5 xs:h-5" /> : <VideoOff size={16} className="xs:w-5 xs:h-5" />}
+            {videoEnabled ? <Video size={20} /> : <VideoOff size={20} />}
           </button>
 
           <button
             onClick={toggleScreenShare}
-            className={`control-btn ${
-              isScreenSharing ? 'control-btn-warning' : 'control-btn-primary'
+            className={`p-3 rounded-full transition-all duration-200 ${
+              isScreenSharing 
+                ? 'bg-yellow-600 hover:bg-yellow-500 text-white' 
+                : 'bg-gray-600 hover:bg-gray-500 text-white'
             }`}
-            title={isScreenSharing ? 'Stop screen sharing' : 'Share screen'}
           >
-            {isScreenSharing ? <MonitorOff size={16} className="xs:w-5 xs:h-5" /> : <Monitor size={16} className="xs:w-5 xs:h-5" />}
+            {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
           </button>
         </div>
       </div>
 
-      <div className={`text-center text-xs xs:text-sm ${
+      <div className={`text-center text-sm ${
         isDark ? 'text-gray-400' : 'text-gray-600'
       }`}>
         <p>

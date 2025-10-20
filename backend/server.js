@@ -11,7 +11,7 @@ const FRONTEND_URLS = "https://videoconnect-ikarus-3d.onrender.com";
 
 const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:3000" , 
+    origin: ["http://localhost:3000", 
       FRONTEND_URLS,
       "https://videoconnect-ikarus-3d.onrender.com",
       "https://*.onrender.com"
@@ -24,7 +24,7 @@ app.options('*', cors());
 
 app.use(cors({
   origin: [
-    "http://localhost:3000" , 
+    "http://localhost:3000", 
       FRONTEND_URLS,
       "https://videoconnect-ikarus-3d.onrender.com",
       "https://*.onrender.com"
@@ -38,7 +38,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const activeMeetings = new Map();
 const users = new Map();
-const pendingUsers = new Map(); // Store users waiting for approval
+const pendingUsers = new Map();
 
 app.get('/', (req, res) => {
   res.json({ message: 'Video Call API' });
@@ -51,12 +51,12 @@ app.post('/api/meetings/create', (req, res) => {
     participants: new Map(),
     createdAt: new Date(),
     chat: [],
-    adminSocketId: null, // Will be set when host joins
+    adminSocketId: null,
     settings: {
-      requireApproval: true, // Admin must approve new participants
+      requireApproval: true,
       locked: false
     },
-    pendingJoins: new Map() // Store pending join requests
+    pendingJoins: new Map()
   };
   
   activeMeetings.set(meetingId, meeting);
@@ -91,15 +91,12 @@ io.on('connection', (socket) => {
 
     const meeting = activeMeetings.get(meetingId);
     
-    // Set admin if it's the first user (host)
     if (meeting.participants.size === 0 && userData.isHost) {
       meeting.adminSocketId = socket.id;
       console.log(`Admin set: ${userData.name} (${socket.id})`);
     }
 
-    // If meeting requires approval and user is not host
     if (meeting.settings.requireApproval && !userData.isHost && meeting.adminSocketId) {
-      // Store pending user
       const pendingUser = {
         ...userData,
         socketId: socket.id,
@@ -109,13 +106,11 @@ io.on('connection', (socket) => {
       
       meeting.pendingJoins.set(socket.id, pendingUser);
       
-      // Notify admin about pending user
       socket.to(meeting.adminSocketId).emit('user-waiting-approval', {
         user: userData,
         socketId: socket.id
       });
       
-      // Notify user that they are waiting for approval
       socket.emit('waiting-for-approval', {
         message: 'Waiting for host approval to join the meeting'
       });
@@ -124,11 +119,9 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Direct join for admin or if no approval required
     completeUserJoin(socket, meetingId, userData);
   });
 
-  // Admin approves a user
   socket.on('approve-user', (data) => {
     const { targetSocketId, approved } = data;
     const user = users.get(socket.id);
@@ -151,7 +144,6 @@ io.on('connection', (socket) => {
     }
 
     if (approved) {
-      // Approve user
       completeUserJoin(io.sockets.sockets.get(targetSocketId), user.meetingId, pendingUser);
       meeting.pendingJoins.delete(targetSocketId);
       
@@ -162,7 +154,6 @@ io.on('connection', (socket) => {
       
       console.log(`User ${pendingUser.name} approved by admin`);
     } else {
-      // Decline user
       meeting.pendingJoins.delete(targetSocketId);
       io.to(targetSocketId).emit('join-declined', {
         message: 'Host declined your join request'
@@ -177,7 +168,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Admin mutes/unmutes a participant
   socket.on('admin-toggle-audio', (data) => {
     const { targetSocketId, enabled } = data;
     const adminUser = users.get(socket.id);
@@ -193,10 +183,8 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Notify the target user to toggle audio
     io.to(targetSocketId).emit('force-toggle-audio', { enabled });
     
-    // Notify all participants about the change
     socket.to(adminUser.meetingId).emit('user-audio-toggled', {
       userId: targetSocketId,
       audioEnabled: enabled,
@@ -207,7 +195,6 @@ io.on('connection', (socket) => {
     console.log(`Admin ${adminUser.name} ${enabled ? 'unmuted' : 'muted'} user ${targetSocketId}`);
   });
 
-  // Admin turns on/off video for a participant
   socket.on('admin-toggle-video', (data) => {
     const { targetSocketId, enabled } = data;
     const adminUser = users.get(socket.id);
@@ -223,10 +210,8 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Notify the target user to toggle video
     io.to(targetSocketId).emit('force-toggle-video', { enabled });
     
-    // Notify all participants about the change
     socket.to(adminUser.meetingId).emit('user-video-toggled', {
       userId: targetSocketId,
       videoEnabled: enabled,
@@ -237,7 +222,6 @@ io.on('connection', (socket) => {
     console.log(`Admin ${adminUser.name} ${enabled ? 'enabled' : 'disabled'} video for user ${targetSocketId}`);
   });
 
-  // Admin kicks a participant
   socket.on('kick-user', (data) => {
     const { targetSocketId } = data;
     const adminUser = users.get(socket.id);
@@ -259,15 +243,12 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Notify the kicked user
     io.to(targetSocketId).emit('kicked-from-meeting', {
       message: 'You have been removed from the meeting by the host'
     });
 
-    // Remove user from meeting
     removeUserFromMeeting(targetSocketId);
     
-    // Notify all participants
     io.to(adminUser.meetingId).emit('user-kicked', {
       userId: targetSocketId,
       userName: targetUser.name,
@@ -277,7 +258,6 @@ io.on('connection', (socket) => {
     console.log(`User ${targetUser.name} kicked by admin ${adminUser.name}`);
   });
 
-  // Admin ends meeting for everyone
   socket.on('end-meeting-for-all', () => {
     const adminUser = users.get(socket.id);
     
@@ -292,19 +272,16 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Notify all participants
     io.to(adminUser.meetingId).emit('meeting-ended-by-host', {
       message: 'Meeting has been ended by the host'
     });
 
-    // Remove all users from the meeting
     meeting.participants.forEach((user, socketId) => {
       if (socketId !== socket.id) {
         removeUserFromMeeting(socketId);
       }
     });
 
-    // Clear pending users
     meeting.pendingJoins.clear();
 
     console.log(`Meeting ${adminUser.meetingId} ended by admin ${adminUser.name}`);
@@ -395,28 +372,23 @@ io.on('connection', (socket) => {
     if (user) {
       const meeting = activeMeetings.get(user.meetingId);
       if (meeting) {
-        // If admin disconnects, end meeting for everyone
         if (meeting.adminSocketId === socket.id) {
           io.to(user.meetingId).emit('meeting-ended-by-host', {
             message: 'Meeting has been ended because the host left'
           });
 
-          // Remove all users from the meeting
           meeting.participants.forEach((user, socketId) => {
             if (socketId !== socket.id) {
               removeUserFromMeeting(socketId);
             }
           });
 
-          // Clear pending users
           meeting.pendingJoins.clear();
           
-          // Remove meeting
           activeMeetings.delete(user.meetingId);
           
           console.log(`Meeting ${user.meetingId} ended because admin left`);
         } else {
-          // Regular user disconnect
           removeUserFromMeeting(socket.id);
         }
       }
@@ -425,7 +397,6 @@ io.on('connection', (socket) => {
     console.log('User disconnected:', socket.id);
   });
 
-  // Helper function to complete user join
   function completeUserJoin(socket, meetingId, userData) {
     const meeting = activeMeetings.get(meetingId);
     
@@ -441,7 +412,8 @@ io.on('connection', (socket) => {
     });
 
     socket.join(meetingId);
-    socket.to(meetingId).emit('user-joined', {
+
+    io.to(meetingId).emit('user-joined', {
       user: userData,
       participants: Array.from(meeting.participants.values())
     });
@@ -455,7 +427,6 @@ io.on('connection', (socket) => {
     console.log(`User ${userData.name} joined meeting ${meetingId}`);
   }
 
-  // Helper function to remove user from meeting
   function removeUserFromMeeting(socketId) {
     const user = users.get(socketId);
     
@@ -465,12 +436,11 @@ io.on('connection', (socket) => {
         meeting.participants.delete(socketId);
         meeting.pendingJoins.delete(socketId);
         
-        socket.to(user.meetingId).emit('user-left', {
+        io.to(user.meetingId).emit('user-left', {
           userId: socketId,
           participants: Array.from(meeting.participants.values())
         });
 
-        // If no participants left, remove meeting
         if (meeting.participants.size === 0) {
           activeMeetings.delete(user.meetingId);
         }

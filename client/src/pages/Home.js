@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { 
   Video, 
-  Users, 
+ 
   Moon, 
   Sun, 
   ArrowRight,
