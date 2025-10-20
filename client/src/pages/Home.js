@@ -99,7 +99,7 @@ function Home() {
           <h1 className={`text-lg xs:text-xl sm:text-2xl font-bold ${
             isDark ? 'text-white' : 'text-gray-800'
           }`}>
-            VideoConnect
+            VideoConnect Aryan 102203357
           </h1>
         </div>
         
@@ -122,9 +122,9 @@ function Home() {
             <h2 className={`text-2xl xs:text-3xl sm:text-4xl lg:text-5xl font-bold leading-tight ${
               isDark ? 'text-white' : 'text-gray-800'
             }`}>
-              Premium
+              Let's
               <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-purple-600">
-                Video Calls
+               Connect
               </span>
             </h2>
             

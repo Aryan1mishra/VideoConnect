@@ -4,7 +4,6 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import Home from './pages/Home';
 import Meeting from './pages/Meeting';
 import './index.css';
-import { Divide } from 'lucide-react';
 
 function App() {
   return (
@@ -13,7 +12,7 @@ function App() {
         <div className="App">
           <Routes>
             <Route path="/" element={<Home/>}/>
-            <Route path="/meeting" element={<Meeting/>}/>
+            <Route path="/meeting/:meetingId" element={<Meeting/>}/>
           </Routes>
         </div>
       </Router>
