@@ -9,14 +9,14 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: [ "https://videoconnect-for-ikarus-3d.onrender.com","http://localhost:3000" , "https://*.onrender.com"],
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
+  origin: [ "https://videoconnect-for-ikarus-3d.onrender.com","http://localhost:3000" , "https://*.onrender.com"],
   credentials: true
 }));
 
