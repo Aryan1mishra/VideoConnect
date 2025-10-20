@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_SERVER = process.env.REACT_APP_SOCKET_SERVER || 'http://localhost:5000';
+const SOCKET_SERVER = process.env.REACT_APP_SOCKET_SERVER || 'https://videoconnect-j10j.onrender.com';
 
 class SocketService {
   constructor() {
